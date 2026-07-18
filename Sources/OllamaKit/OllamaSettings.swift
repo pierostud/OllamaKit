@@ -56,8 +56,7 @@ public final class OllamaSettings {
         [
             deploymentMode.rawValue,
             cloudAPIKey.isEmpty ? "0" : "1",
-            baseURLString,
-            model
+            baseURLString
         ].joined(separator: "|")
     }
 

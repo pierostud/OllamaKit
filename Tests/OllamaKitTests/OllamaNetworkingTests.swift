@@ -293,4 +293,59 @@ struct OllamaNetworkingTests {
         #expect(info.plan == "pro")
         #expect(info.displayPlan == "Pro")
     }
+
+    @Test func refreshInstalledModelsFiltersCloudByAccess() async throws {
+        let models = try await MockHTTP.withHandler({ request in
+            let path = request.url?.path ?? ""
+            if path == "/api/tags" {
+                let data = """
+                {"models":[{"name":"gemma4:31b"},{"name":"qwen3.5:397b"}]}
+                """.data(using: .utf8)!
+                return (MockHTTP.okResponse(for: request), data)
+            }
+
+            if path == "/api/generate" {
+                let body = String(data: MockHTTP.bodyData(from: request), encoding: .utf8) ?? ""
+                if body.contains("qwen3.5:397b") {
+                    let data = #"{"error":"this model requires a subscription, upgrade for access"}"#.data(using: .utf8)!
+                    return (
+                        HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 403,
+                            httpVersion: nil,
+                            headerFields: nil
+                        )!,
+                        data
+                    )
+                }
+                return (MockHTTP.okResponse(for: request), Data("{}".utf8))
+            }
+
+            Issue.record("Unexpected path \(path)")
+            return (MockHTTP.okResponse(for: request), Data())
+        }) {
+            let service = OllamaModelService(
+                connectionConfig: .cloud(apiKey: "key"),
+                urlSession: MockHTTP.makeSession()
+            )
+            return try await service.refreshInstalledModels(forceCloudAccessValidation: true)
+        }
+
+        #expect(models.map(\.name) == ["gemma4:31b"])
+    }
+
+    @Test func refreshInstalledModelsRequiresCloudAPIKey() async {
+        let service = OllamaModelService(connectionConfig: .cloud(apiKey: nil), urlSession: MockHTTP.makeSession())
+        do {
+            _ = try await service.refreshInstalledModels()
+            Issue.record("Expected missingAPIKey")
+        } catch let error as OllamaError {
+            guard case .missingAPIKey = error else {
+                Issue.record("Unexpected error \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Unexpected error type \(error)")
+        }
+    }
 }

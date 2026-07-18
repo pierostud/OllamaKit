@@ -26,8 +26,8 @@ dependencies: [
 - Bearer auth for cloud API keys (Keychain in Release, UserDefaults in Debug)
 - Chat client (`/api/chat`)
 - Model management for local: list / load / unload / pull
-- Cloud model access filtering + account plan lookup
-- Ready-made `OllamaSettingsView`
+- Cloud model access filtering (plan-aware) + account plan lookup
+- Ready-made `OllamaSettingsView` with searchable cloud model picker
 
 ## Usage
 

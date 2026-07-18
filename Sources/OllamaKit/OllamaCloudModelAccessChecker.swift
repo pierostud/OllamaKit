@@ -54,7 +54,9 @@ public struct OllamaCloudModelAccessChecker: Sendable {
         forceValidation: Bool = false,
         onProgress: (@Sendable (Int, Int) -> Void)? = nil
     ) async -> [String] {
-        guard !apiKey.isEmpty, !modelNames.isEmpty else { return modelNames }
+        // Without an API key we cannot verify plan access — never return the full catalog.
+        guard !apiKey.isEmpty else { return [] }
+        guard !modelNames.isEmpty else { return [] }
 
         let cache = Self.loadCache(for: apiKey)
         let cacheIsFresh = cache.map { Date().timeIntervalSince($0.updatedAt) < Self.cacheLifetime } ?? false
@@ -102,10 +104,13 @@ public struct OllamaCloudModelAccessChecker: Sendable {
                 onProgress?(completed, total)
 
                 switch result.1 {
-                case .accessible, .inconclusive:
+                case .accessible:
                     accessible.insert(result.0)
                 case .requiresSubscription, .unavailable:
                     inaccessible.insert(result.0)
+                case .inconclusive:
+                    // Keep out of both lists so a later refresh can re-check.
+                    break
                 }
 
                 if let next = iterator.next() {

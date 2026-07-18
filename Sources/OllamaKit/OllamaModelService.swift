@@ -71,7 +71,7 @@ public actor OllamaModelService {
     }
 
     public func isServerAvailable() async -> Bool {
-        if connectionConfig.requiresAuthentication, connectionConfig.apiKey == nil {
+        if !connectionConfig.supportsModelManagement, connectionConfig.apiKey == nil {
             return false
         }
 
@@ -93,6 +93,12 @@ public actor OllamaModelService {
         accountPlan: String? = nil,
         onCloudAccessProgress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> [OllamaInstalledModel] {
+        if !connectionConfig.supportsModelManagement {
+            guard connectionConfig.apiKey != nil else {
+                throw OllamaError.missingAPIKey
+            }
+        }
+
         if !connectionConfig.supportsModelManagement,
            !forceCloudAccessValidation,
            let apiKey = connectionConfig.apiKey,

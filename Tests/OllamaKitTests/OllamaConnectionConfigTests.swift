@@ -112,4 +112,9 @@ struct OllamaCloudModelAccessCheckerTests {
         #expect(OllamaCloudModelAccessChecker.interpretAccessResponse(statusCode: 429, body: Data()) == .accessible)
         #expect(OllamaCloudModelAccessChecker.interpretAccessResponse(statusCode: 402, body: Data()) == .accessible)
     }
+
+    @Test func interpretAccessResponseTreatsUnknownErrorsAsInconclusive() {
+        let result = OllamaCloudModelAccessChecker.interpretAccessResponse(statusCode: 500, body: Data())
+        #expect(result == .inconclusive)
+    }
 }

@@ -1,6 +1,9 @@
 import SwiftUI
 
 /// Ready-made settings form for local / cloud Ollama configuration.
+///
+/// In cloud mode, only models accessible on the account plan are listed
+/// (same access-probe + cache approach used in Flashcard).
 public struct OllamaSettingsView: View {
     @Bindable private var settings: OllamaSettings
 
@@ -12,7 +15,9 @@ public struct OllamaSettingsView: View {
     @State private var pullProgress: OllamaPullProgress?
     @State private var isBusy = false
     @State private var cloudAccountPlan = ""
+    @State private var cloudAccountPlanRaw = ""
     @State private var cloudAccessProgress: (completed: Int, total: Int)?
+    @State private var showCloudModelPicker = false
 
     private enum ConnectionStatus {
         case idle
@@ -41,7 +46,7 @@ public struct OllamaSettingsView: View {
                 Text("Ollama Deployment")
             } footer: {
                 Text(settings.isCloudMode
-                     ? String(localized: "Cloud mode connects to ollama.com.")
+                     ? String(localized: "Cloud mode connects to ollama.com and lists only models available on your plan.")
                      : String(localized: "Local mode connects to an Ollama server on this Mac or your network."))
                     .font(.caption)
             }
@@ -97,19 +102,11 @@ public struct OllamaSettingsView: View {
             }
 
             Section {
-                TextField(
-                    String(localized: "Model"),
-                    text: $settings.model
-                )
-                #if os(macOS)
-                .textFieldStyle(.roundedBorder)
-                #endif
-
                 HStack {
                     Button(String(localized: "Refresh Models")) {
                         Task { await refreshModels(force: true) }
                     }
-                    .disabled(isBusy)
+                    .disabled(isBusy || (settings.isCloudMode && settings.cloudAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
                     if isBusy {
                         ProgressView()
@@ -135,41 +132,77 @@ public struct OllamaSettingsView: View {
                     }
                 }
 
-                if !modelsError.isEmpty {
-                    Text(modelsError)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
+                if settings.isCloudMode {
+                    LabeledContent(String(localized: "Model")) {
+                        HStack(spacing: 8) {
+                            Text(settings.model.isEmpty ? "—" : settings.model)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .foregroundStyle(settings.model.isEmpty ? .secondary : .primary)
 
-                if installedModels.isEmpty {
-                    Text(
-                        String(localized: "No models found yet. Test the connection, then refresh.")
+                            Spacer(minLength: 8)
+
+                            Button(String(localized: "Choose…")) {
+                                showCloudModelPicker = true
+                            }
+                            .disabled(installedModels.isEmpty || isBusy)
+                        }
+                    }
+
+                    TextField(
+                        String(localized: "Model name"),
+                        text: $settings.model
                     )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    #if os(macOS)
+                    .textFieldStyle(.roundedBorder)
+                    #endif
+
+                    if installedModels.isEmpty {
+                        Text(
+                            String(localized: "No cloud models available for your plan yet. Add your API key, then refresh.")
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    } else {
+                        Text("\(installedModels.count) models available on your plan.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
-                    ForEach(installedModels) { model in
-                        HStack {
-                            Button(model.name) {
-                                settings.model = model.name
-                            }
-                            .buttonStyle(.plain)
+                    TextField(
+                        String(localized: "Model"),
+                        text: $settings.model
+                    )
+                    #if os(macOS)
+                    .textFieldStyle(.roundedBorder)
+                    #endif
 
-                            Spacer()
+                    if installedModels.isEmpty {
+                        Text(
+                            String(localized: "No models found yet. Test the connection, then refresh.")
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(installedModels) { model in
+                            HStack {
+                                Button(model.name) {
+                                    settings.model = model.name
+                                }
+                                .buttonStyle(.plain)
 
-                            if model.name == settings.model {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.tint)
-                            }
+                                Spacer()
 
-                            if model.isLoaded {
-                                Text("Loaded")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+                                if model.name == settings.model {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.tint)
+                                }
 
-                            if !settings.isCloudMode {
                                 if model.isLoaded {
+                                    Text("Loaded")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+
                                     Button(String(localized: "Stop")) {
                                         Task { await unload(model.name) }
                                     }
@@ -184,8 +217,19 @@ public struct OllamaSettingsView: View {
                         }
                     }
                 }
+
+                if !modelsError.isEmpty {
+                    Text(modelsError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             } header: {
-                Text("Models")
+                Text(settings.isCloudMode ? String(localized: "Cloud Model") : String(localized: "Models"))
+            } footer: {
+                if settings.isCloudMode {
+                    Text(String(localized: "Only models reachable with your Ollama Cloud plan are shown. Refresh re-checks access."))
+                        .font(.caption)
+                }
             }
 
             if !settings.isCloudMode {
@@ -226,8 +270,14 @@ public struct OllamaSettingsView: View {
                 }
             }
         }
+        .sheet(isPresented: $showCloudModelPicker) {
+            OllamaCloudModelSelectionSheet(
+                models: installedModels.map(\.name),
+                selection: $settings.model
+            )
+        }
         .task(id: settings.availabilityToken) {
-            await refreshModels(force: false)
+            await bootstrap(forceRefresh: false)
         }
     }
 
@@ -265,9 +315,46 @@ public struct OllamaSettingsView: View {
         OllamaModelService(connectionConfig: settings.connectionConfig)
     }
 
-    private func testConnection() async {
+    private func bootstrap(forceRefresh: Bool) async {
+        if settings.isCloudMode,
+           !forceRefresh,
+           OllamaCloudModelAccessChecker.hasFreshCache(for: settings.cloudAPIKey) {
+            loadCachedCloudModels()
+            await testConnection(refreshModels: false)
+            return
+        }
+
+        await testConnection(refreshModels: true)
+    }
+
+    private func loadCachedCloudModels() {
+        guard let snapshot = OllamaCloudModelAccessChecker.cachedSnapshot(for: settings.cloudAPIKey) else {
+            return
+        }
+
+        installedModels = snapshot.models.map {
+            OllamaInstalledModel(name: $0, isLoaded: false, contextLength: nil)
+        }
+
+        if !snapshot.plan.isEmpty {
+            cloudAccountPlanRaw = snapshot.plan
+            cloudAccountPlan = OllamaCloudAccountInfo(plan: snapshot.plan, email: nil).displayPlan
+        }
+
+        ensureSelectedModelIsAvailable()
+    }
+
+    private func testConnection(refreshModels shouldRefresh: Bool = true) async {
         connectionStatus = .testing
         statusMessage = String(localized: "Testing…")
+
+        if settings.isCloudMode,
+           settings.cloudAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            connectionStatus = .failed
+            statusMessage = String(localized: "An Ollama Cloud API key is required.")
+            installedModels = []
+            return
+        }
 
         let service = modelService()
         let available = await service.isServerAvailable()
@@ -278,7 +365,9 @@ public struct OllamaSettingsView: View {
                 ? String(localized: "Cloud")
                 : String(localized: "Local")
             statusMessage = String(localized: "Connected (\(mode))")
-            await refreshModels(force: true)
+            if shouldRefresh {
+                await refreshModels(force: true)
+            }
         } else {
             connectionStatus = .failed
             statusMessage = settings.isCloudMode
@@ -295,20 +384,37 @@ public struct OllamaSettingsView: View {
             cloudAccessProgress = nil
         }
 
+        if settings.isCloudMode,
+           settings.cloudAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            installedModels = []
+            modelsError = String(localized: "An Ollama Cloud API key is required.")
+            return
+        }
+
         let service = modelService()
 
         do {
+            var accountPlan: String? = cloudAccountPlanRaw.isEmpty ? nil : cloudAccountPlanRaw
+
             if settings.isCloudMode {
-                if let info = try? await service.fetchCloudAccountInfo() {
-                    cloudAccountPlan = info.displayPlan
+                if force || cloudAccountPlanRaw.isEmpty {
+                    if let info = try? await service.fetchCloudAccountInfo() {
+                        cloudAccountPlanRaw = info.plan
+                        cloudAccountPlan = info.displayPlan
+                        accountPlan = info.plan
+                    }
+                } else if cloudAccountPlan.isEmpty {
+                    cloudAccountPlan = OllamaCloudAccountInfo(plan: cloudAccountPlanRaw, email: nil).displayPlan
                 }
             } else {
                 cloudAccountPlan = ""
+                cloudAccountPlanRaw = ""
+                accountPlan = nil
             }
 
             installedModels = try await service.refreshInstalledModels(
                 forceCloudAccessValidation: force && settings.isCloudMode,
-                accountPlan: cloudAccountPlan.lowercased().isEmpty ? nil : cloudAccountPlan.lowercased(),
+                accountPlan: accountPlan,
                 onCloudAccessProgress: { completed, total in
                     Task { @MainActor in
                         cloudAccessProgress = (completed, total)
@@ -316,12 +422,17 @@ public struct OllamaSettingsView: View {
                 }
             )
 
-            if settings.model.isEmpty, let first = installedModels.first {
-                settings.model = first.name
-            }
+            ensureSelectedModelIsAvailable()
         } catch {
             modelsError = error.localizedDescription
             installedModels = []
+        }
+    }
+
+    private func ensureSelectedModelIsAvailable() {
+        if !installedModels.contains(where: { $0.name == settings.model }),
+           let first = installedModels.first {
+            settings.model = first.name
         }
     }
 
