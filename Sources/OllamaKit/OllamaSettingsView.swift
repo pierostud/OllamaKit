@@ -149,14 +149,6 @@ public struct OllamaSettingsView: View {
                         }
                     }
 
-                    TextField(
-                        String(localized: "Model name"),
-                        text: $settings.model
-                    )
-                    #if os(macOS)
-                    .textFieldStyle(.roundedBorder)
-                    #endif
-
                     if installedModels.isEmpty {
                         Text(
                             String(localized: "No cloud models available for your plan yet. Add your API key, then refresh.")
@@ -168,27 +160,24 @@ public struct OllamaSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                } else {
-                    TextField(
-                        String(localized: "Model"),
-                        text: $settings.model
+                } else if installedModels.isEmpty {
+                    Text(
+                        String(localized: "No models found yet. Test the connection, then refresh.")
                     )
-                    #if os(macOS)
-                    .textFieldStyle(.roundedBorder)
-                    #endif
-
-                    if installedModels.isEmpty {
-                        Text(
-                            String(localized: "No models found yet. Test the connection, then refresh.")
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    } else {
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Picker(String(localized: "Model"), selection: localModelSelection) {
                         ForEach(installedModels) { model in
-                            localModelRow(model)
+                            Text(model.name).tag(model.name)
                         }
                     }
+
+                    ForEach(installedModels.filter { $0.name == settings.model || $0.isLoaded }) { model in
+                        localModelMemoryRow(model)
+                    }
                 }
+
 
                 if !modelsError.isEmpty {
                     Text(modelsError)
@@ -199,10 +188,10 @@ public struct OllamaSettingsView: View {
                 Text(settings.isCloudMode ? String(localized: "Cloud Model") : String(localized: "Models"))
             } footer: {
                 if settings.isCloudMode {
-                    Text(String(localized: "Only models reachable with your Ollama Cloud plan are shown. Refresh re-checks access."))
+                    Text(String(localized: "Choose a model from those available on your Ollama Cloud plan."))
                         .font(.caption)
                 } else {
-                    Text(String(localized: "The checkmark is the model the app uses for chat. “In memory” means Ollama already has it loaded in RAM (faster first reply). Tap a model to select it and warm it up."))
+                    Text(String(localized: "Pick the model the app should use. Load keeps it in RAM for faster replies; Stop frees memory."))
                         .font(.caption)
                 }
             }
@@ -290,33 +279,20 @@ public struct OllamaSettingsView: View {
         OllamaModelService(connectionConfig: settings.connectionConfig)
     }
 
-    @ViewBuilder
-    private func localModelRow(_ model: OllamaInstalledModel) -> some View {
-        let isSelected = model.name == settings.model
+    private var localModelSelection: Binding<String> {
+        Binding(
+            get: { settings.model },
+            set: { selectAndLoadLocalModel($0) }
+        )
+    }
 
+    @ViewBuilder
+    private func localModelMemoryRow(_ model: OllamaInstalledModel) -> some View {
         HStack {
-            Button {
-                selectAndLoadLocalModel(model.name)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(model.name)
-                        .foregroundStyle(.primary)
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.tint)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isBusy)
+            Text(model.name)
+                .foregroundStyle(model.name == settings.model ? .primary : .secondary)
 
             Spacer()
-
-            if isSelected {
-                Text(String(localized: "Selected"))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
 
             if model.isLoaded {
                 Text(String(localized: "In memory"))
@@ -327,7 +303,7 @@ public struct OllamaSettingsView: View {
                     Task { await unload(model.name) }
                 }
                 .disabled(isBusy)
-            } else {
+            } else if model.name == settings.model {
                 Button(String(localized: "Load")) {
                     Task { await load(model.name) }
                 }
@@ -337,6 +313,7 @@ public struct OllamaSettingsView: View {
     }
 
     private func selectAndLoadLocalModel(_ name: String) {
+        guard settings.model != name else { return }
         settings.model = name
         Task { await load(name) }
     }
