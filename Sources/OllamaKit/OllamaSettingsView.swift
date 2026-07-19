@@ -185,35 +185,7 @@ public struct OllamaSettingsView: View {
                         .foregroundStyle(.secondary)
                     } else {
                         ForEach(installedModels) { model in
-                            HStack {
-                                Button(model.name) {
-                                    settings.model = model.name
-                                }
-                                .buttonStyle(.plain)
-
-                                Spacer()
-
-                                if model.name == settings.model {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.tint)
-                                }
-
-                                if model.isLoaded {
-                                    Text("Loaded")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-
-                                    Button(String(localized: "Stop")) {
-                                        Task { await unload(model.name) }
-                                    }
-                                    .disabled(isBusy)
-                                } else {
-                                    Button(String(localized: "Load")) {
-                                        Task { await load(model.name) }
-                                    }
-                                    .disabled(isBusy)
-                                }
-                            }
+                            localModelRow(model)
                         }
                     }
                 }
@@ -228,6 +200,9 @@ public struct OllamaSettingsView: View {
             } footer: {
                 if settings.isCloudMode {
                     Text(String(localized: "Only models reachable with your Ollama Cloud plan are shown. Refresh re-checks access."))
+                        .font(.caption)
+                } else {
+                    Text(String(localized: "The checkmark is the model the app uses for chat. “In memory” means Ollama already has it loaded in RAM (faster first reply). Tap a model to select it and warm it up."))
                         .font(.caption)
                 }
             }
@@ -313,6 +288,57 @@ public struct OllamaSettingsView: View {
 
     private func modelService() -> OllamaModelService {
         OllamaModelService(connectionConfig: settings.connectionConfig)
+    }
+
+    @ViewBuilder
+    private func localModelRow(_ model: OllamaInstalledModel) -> some View {
+        let isSelected = model.name == settings.model
+
+        HStack {
+            Button {
+                selectAndLoadLocalModel(model.name)
+            } label: {
+                HStack(spacing: 6) {
+                    Text(model.name)
+                        .foregroundStyle(.primary)
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.tint)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(isBusy)
+
+            Spacer()
+
+            if isSelected {
+                Text(String(localized: "Selected"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if model.isLoaded {
+                Text(String(localized: "In memory"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                Button(String(localized: "Stop")) {
+                    Task { await unload(model.name) }
+                }
+                .disabled(isBusy)
+            } else {
+                Button(String(localized: "Load")) {
+                    Task { await load(model.name) }
+                }
+                .disabled(isBusy)
+            }
+        }
+    }
+
+    private func selectAndLoadLocalModel(_ name: String) {
+        settings.model = name
+        Task { await load(name) }
     }
 
     private func bootstrap(forceRefresh: Bool) async {
