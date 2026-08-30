@@ -104,6 +104,148 @@ struct OllamaNetworkingTests {
         }
     }
 
+    @Test func chatWithToolsReturnsToolCalls() async throws {
+        let response = try await MockHTTP.withHandler({ request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/api/chat")
+
+            let body = try JSONSerialization.jsonObject(with: MockHTTP.bodyData(from: request)) as? [String: Any]
+            #expect(body?["model"] as? String == "llama3.2")
+            #expect(body?["format"] == nil)
+
+            let tools = body?["tools"] as? [[String: Any]]
+            #expect(tools?.count == 1)
+            let function = (tools?.first?["function"] as? [String: Any])
+            #expect(function?["name"] as? String == "ping")
+
+            let messages = body?["messages"] as? [[String: Any]]
+            #expect(messages?.count == 2)
+            #expect(messages?[0]["role"] as? String == "system")
+            #expect(messages?[1]["role"] as? String == "user")
+
+            let data = """
+            {
+              "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "index": 0,
+                      "name": "ping",
+                      "arguments": {"value": "hello"}
+                    }
+                  }
+                ]
+              },
+              "done_reason": "tool_calls"
+            }
+            """.data(using: .utf8)!
+            return (MockHTTP.okResponse(for: request), data)
+        }) {
+            let client = OllamaClient(connectionConfig: .local(), urlSession: MockHTTP.makeSession())
+            return try await client.chatWithTools(
+                model: "llama3.2",
+                messages: [.system("Be helpful"), .user("Ping")],
+                tools: [
+                    OllamaToolDefinition(
+                        name: "ping",
+                        description: "Ping tool",
+                        parameters: [
+                            "type": "object",
+                            "properties": ["value": ["type": "string"]],
+                        ]
+                    ),
+                ]
+            )
+        }
+
+        #expect(response.content.isEmpty)
+        #expect(response.hasToolCalls)
+        #expect(response.toolCalls.count == 1)
+        #expect(response.toolCalls[0].name == "ping")
+        #expect(response.toolCalls[0].parsedArguments()?["value"] as? String == "hello")
+        #expect(response.doneReason == "tool_calls")
+    }
+
+    @Test func chatWithToolsEncodesAssistantAndToolMessages() async throws {
+        let response = try await MockHTTP.withHandler({ request in
+            let body = try JSONSerialization.jsonObject(with: MockHTTP.bodyData(from: request)) as? [String: Any]
+            let messages = body?["messages"] as? [[String: Any]]
+            #expect(messages?.count == 4)
+            #expect(messages?[2]["role"] as? String == "assistant")
+            #expect((messages?[2]["tool_calls"] as? [[String: Any]])?.isEmpty == false)
+            #expect(messages?[3]["role"] as? String == "tool")
+            #expect(messages?[3]["tool_name"] as? String == "ping")
+            #expect(messages?[3]["content"] as? String == "pong")
+
+            let data = """
+            {"message":{"role":"assistant","content":"done"},"done_reason":"stop"}
+            """.data(using: .utf8)!
+            return (MockHTTP.okResponse(for: request), data)
+        }) {
+            let client = OllamaClient(connectionConfig: .local(), urlSession: MockHTTP.makeSession())
+            return try await client.chatWithTools(
+                model: "llama3.2",
+                messages: [
+                    .system("sys"),
+                    .user("Ping"),
+                    .assistant(toolCalls: [OllamaToolCall(index: 0, name: "ping", arguments: #"{"value":"hello"}"#)]),
+                    .tool(name: "ping", content: "pong"),
+                ],
+                tools: [
+                    OllamaToolDefinition(
+                        name: "ping",
+                        description: "Ping tool",
+                        parameters: ["type": "object", "properties": [:] as [String: Any]]
+                    ),
+                ]
+            )
+        }
+
+        #expect(response.content == "done")
+        #expect(response.toolCalls.isEmpty)
+    }
+
+    @Test func chatWithToolsDecodesStringArguments() async throws {
+        let response = try await MockHTTP.withHandler({ request in
+            let data = """
+            {
+              "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "name": "ping",
+                      "arguments": "{\\"value\\":\\"hello\\"}"
+                    }
+                  }
+                ]
+              }
+            }
+            """.data(using: .utf8)!
+            return (MockHTTP.okResponse(for: request), data)
+        }) {
+            let client = OllamaClient(connectionConfig: .local(), urlSession: MockHTTP.makeSession())
+            return try await client.chatWithTools(
+                model: "llama3.2",
+                messages: [.user("Ping")],
+                tools: [
+                    OllamaToolDefinition(
+                        name: "ping",
+                        description: "Ping tool",
+                        parameters: ["type": "object", "properties": [:] as [String: Any]]
+                    ),
+                ]
+            )
+        }
+
+        #expect(response.toolCalls[0].arguments.contains("hello"))
+    }
+
     @Test func chatMapsTransportFailureToNotRunning() async throws {
         do {
             _ = try await MockHTTP.withHandler({ _ in

@@ -25,6 +25,7 @@ dependencies: [
 - Local server (`http://127.0.0.1:11434`) or Ollama Cloud (`https://ollama.com`)
 - Bearer auth for cloud API keys (Keychain in Release, UserDefaults in Debug)
 - Chat client (`/api/chat`)
+- Tool calling via `chatWithTools()` (separate from structured JSON chat — do not combine `tools` with `jsonFormat` / `jsonSchema`)
 - Model management for local: list / load / unload / pull
 - Cloud model access filtering (plan-aware) + account plan lookup
 - Ready-made `OllamaSettingsView` with searchable cloud model picker
@@ -48,6 +49,24 @@ let reply = try await client.chat(
     model: settings.model,
     system: "You are a helpful assistant.",
     user: "Hello"
+)
+
+// Tool calling (agent workflows)
+let tools = [
+    OllamaToolDefinition(
+        name: "get_weather",
+        description: "Get weather for a city",
+        parameters: [
+            "type": "object",
+            "required": ["city"],
+            "properties": ["city": ["type": "string"]],
+        ]
+    ),
+]
+let response = try await client.chatWithTools(
+    model: settings.model,
+    messages: [.user("Weather in Rome?")],
+    tools: tools
 )
 ```
 
